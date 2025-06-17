@@ -396,3 +396,23 @@ func (h *Handler) jettonMasterState(accountID ton.AccountID) (state [2]string, o
 	state, ok = h.jettonMasterStateCache[accountID]
 	return
 }
+
+func (h *Handler) GetState(ctx context.Context) (*oas.State, error) {
+	ch := make(chan prover.AccountCountResponse, 1)
+	h.prover.Queue() <- prover.AccountCountRequest{
+		ResponseCh: ch,
+	}
+	select {
+	case <-ctx.Done():
+		return nil, BadRequest("timeout")
+	case resp := <-ch:
+		if resp.Err != nil {
+			return nil, InternalError(resp.Err)
+		}
+		masterAddress := h.jettonMaster.ToRaw()
+		return &oas.State{
+			TotalWallets:  float64(resp.AccountsCount),
+			MasterAddress: masterAddress,
+		}, nil
+	}
+}

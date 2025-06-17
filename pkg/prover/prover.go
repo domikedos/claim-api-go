@@ -14,6 +14,15 @@ import (
 	"github.com/tonkeeper/claim-api-go/pkg/utils"
 )
 
+type AccountCountResponse struct {
+	AccountsCount int
+	Err           error
+}
+
+type AccountCountRequest struct {
+	ResponseCh chan<- AccountCountResponse
+}
+
 type ProofResponse struct {
 	WalletAirdrop WalletAirdrop
 	Err           error
@@ -110,10 +119,30 @@ func (p *Prover) Run(ctx context.Context) {
 				p.processProofRequest(req)
 			case EnumerateRequest:
 				p.processEnumerateAccountsRequest(req)
+			case AccountCountRequest:
+				p.processCountAccounts(req)
 			default:
 				p.logger.Error("unexpected request type", zap.Any("reqAny", reqAny))
 			}
 		}
+	}
+}
+
+func (p *Prover) processCountAccounts(req AccountCountRequest) {
+	timer := prometheus.NewTimer(prometheus.ObserverFunc(func(v float64) {
+		proverTimeHistogramVec.WithLabelValues("processCountAccounts").Observe(v)
+	}))
+	defer timer.ObserveDuration()
+
+	jettonWalletCount, err := countAccounts(p.root)
+	if err != nil {
+		req.ResponseCh <- AccountCountResponse{
+			Err: err,
+		}
+		return
+	}
+	req.ResponseCh <- AccountCountResponse{
+		AccountsCount: jettonWalletCount,
 	}
 }
 
@@ -183,6 +212,15 @@ func prove(accountID ton.AccountID, prover *boc.MerkleProver, root *boc.Cell) (W
 		Data:      data,
 		Proof:     proof,
 	}, nil
+}
+
+func countAccounts(root *boc.Cell) (int, error) {
+	prefix := boc.NewBitString(0)
+	cnt, err := countLeaves(&prefix, root)
+	if err != nil {
+		return 0, err
+	}
+	return cnt, nil
 }
 
 func enumerateAccounts(nextFrom ton.AccountID, root *boc.Cell, count int) ([]walletData, error) {
